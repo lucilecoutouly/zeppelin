@@ -41,7 +41,6 @@ import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.node.Node;
-import org.elasticsearch.node.NodeBuilder;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -50,8 +49,10 @@ import org.junit.experimental.theories.Theories;
 import org.junit.experimental.theories.Theory;
 import org.junit.runner.RunWith;
 
-@RunWith(Theories.class)
-public class ElasticsearchInterpreterTest {
+
+
+public class Elasticsearch2InterpreterTest {
+
 
   @DataPoint public static ElasticsearchInterpreter transportInterpreter;
   @DataPoint public static ElasticsearchInterpreter httpInterpreter;
@@ -59,8 +60,8 @@ public class ElasticsearchInterpreterTest {
   private static Client elsClient;
   private static Node elsNode;
 
-  private static final String[] METHODS = { "GET", "PUT", "DELETE", "POST" };
-  private static final int[] STATUS = { 200, 404, 500, 403 };
+  private static final String[] METHODS = {"GET", "PUT", "DELETE", "POST"};
+  private static final int[] STATUS = {200, 404, 500, 403};
 
   private static final String ELS_CLUSTER_NAME = "zeppelin-elasticsearch-interpreter-test";
   private static final String ELS_HOST = "localhost";
@@ -68,46 +69,45 @@ public class ElasticsearchInterpreterTest {
   private static final String ELS_HTTP_PORT = "10200";
   private static final String ELS_PATH = "/tmp/els";
 
-  private static final AtomicInteger deleteId = new AtomicInteger(2);
 
 
   @BeforeClass
   public static void populate() throws IOException {
 
-    final Settings settings = Settings.settingsBuilder()
-      .put("cluster.name", ELS_CLUSTER_NAME)
-      .put("network.host", ELS_HOST)
-      .put("http.port", ELS_HTTP_PORT)
-      .put("transport.tcp.port", ELS_TRANSPORT_PORT)
-      .put("path.home", ELS_PATH)
-      .build();
+    final Settings settings = Settings.builder()
+        .put("cluster.name", ELS_CLUSTER_NAME)
+        .put("network.host", ELS_HOST)
+        .put("http.port", ELS_HTTP_PORT)
+        .put("transport.tcp.port", ELS_TRANSPORT_PORT)
+        .put("path.home", ELS_PATH)
+        .build();
 
-    elsNode = NodeBuilder.nodeBuilder().settings(settings).node();
+    elsNode = new Node(settings).start();
     elsClient = elsNode.client();
 
     elsClient.admin().indices().prepareCreate("logs")
-      .addMapping("http", jsonBuilder()
-        .startObject().startObject("http").startObject("properties")
-          .startObject("content_length")
+        .addMapping("http", jsonBuilder()
+            .startObject().startObject("http").startObject("properties")
+            .startObject("content_length")
             .field("type", "integer")
-          .endObject()
-        .endObject().endObject().endObject()).get();
+            .endObject()
+            .endObject().endObject().endObject()).get();
 
     for (int i = 0; i < 48; i++) {
       elsClient.prepareIndex("logs", "http", "" + i)
-        .setRefresh(true)
-        .setSource(jsonBuilder()
-          .startObject()
-            .field("date", new Date())
-            .startObject("request")
+          .setRefresh(true)
+          .setSource(jsonBuilder()
+              .startObject()
+              .field("date", new Date())
+              .startObject("request")
               .field("method", METHODS[RandomUtils.nextInt(METHODS.length)])
               .field("url", "/zeppelin/" + UUID.randomUUID().toString())
               .field("headers", Arrays.asList("Accept: *.*", "Host: apache.org"))
-            .endObject()
-            .field("status", STATUS[RandomUtils.nextInt(STATUS.length)])
-            .field("content_length", RandomUtils.nextInt(2000))
-          )
-        .get();
+              .endObject()
+              .field("status", STATUS[RandomUtils.nextInt(STATUS.length)])
+              .field("content_length", RandomUtils.nextInt(2000))
+              .endObject())
+          .get();
     }
 
     for (int i = 1; i < 3; i++) {
@@ -128,28 +128,18 @@ public class ElasticsearchInterpreterTest {
     }
 
     final Properties props = new Properties();
-    props.put(ElasticsearchInterpreter.ELASTICSEARCH_HOST, ELS_HOST);
-    props.put(ElasticsearchInterpreter.ELASTICSEARCH_CLUSTER_NAME, ELS_CLUSTER_NAME);
 
-    props.put(ElasticsearchInterpreter.ELASTICSEARCH_PORT, ELS_TRANSPORT_PORT);
-    props.put(ElasticsearchInterpreter.ELASTICSEARCH_CLIENT_TYPE, "transport");
-    transportInterpreter = new ElasticsearchInterpreter(props);
-    transportInterpreter.open();
-
-    props.put(ElasticsearchInterpreter.ELASTICSEARCH_PORT, ELS_HTTP_PORT);
-    props.put(ElasticsearchInterpreter.ELASTICSEARCH_CLIENT_TYPE, "http");
-    httpInterpreter = new ElasticsearchInterpreter(props);
-    httpInterpreter.open();
+    props.put(ElasticsearchConnector.ELASTICSEARCH_HOST, ELS_HOST);
+    props.put(ElasticsearchConnector.ELASTICSEARCH_PORT, ELS_TRANSPORT_PORT);
+    props.put(ElasticsearchConnector.ELASTICSEARCH_CLUSTER_NAME, ELS_CLUSTER_NAME);
+    interpreter = new ElasticsearchInterpreter(props);
+    interpreter.open();
   }
 
   @AfterClass
-  public static void clean() {
-    if (transportInterpreter != null) {
-      transportInterpreter.close();
-    }
-
-    if (httpInterpreter != null) {
-      httpInterpreter.close();
+  public static void clean() throws IOException {
+    if (interpreter != null) {
+      interpreter.close();
     }
 
     if (elsClient != null) {
@@ -238,28 +228,31 @@ public class ElasticsearchInterpreterTest {
 
     // Single-value metric
     InterpreterResult res = interpreter.interpret("search /logs { \"aggs\" : { \"distinct_status_count\" : " +
-            " { \"cardinality\" : { \"field\" : \"status\" } } } }", ctx);
+
+        " { \"cardinality\" : { \"field\" : \"status\" } } } }", null);
     assertEquals(Code.SUCCESS, res.code());
 
     // Multi-value metric
     res = interpreter.interpret("search /logs { \"aggs\" : { \"content_length_stats\" : " +
-            " { \"extended_stats\" : { \"field\" : \"content_length\" } } } }", ctx);
+        " { \"extended_stats\" : { \"field\" : \"content_length\" } } } }", null);
     assertEquals(Code.SUCCESS, res.code());
 
     // Single bucket
     res = interpreter.interpret("search /logs { \"aggs\" : { " +
-            " \"200_OK\" : { \"filter\" : { \"term\": { \"status\": \"200\" } }, " +
-            "   \"aggs\" : { \"avg_length\" : { \"avg\" : { \"field\" : \"content_length\" } } } } } }", ctx);
+
+        " \"200_OK\" : { \"filter\" : { \"term\": { \"status\": \"200\" } }, " +
+        "   \"aggs\" : { \"avg_length\" : { \"avg\" : { \"field\" : \"content_length\" } } } } } }", null);
     assertEquals(Code.SUCCESS, res.code());
 
     // Multi-buckets
     res = interpreter.interpret("search /logs { \"aggs\" : { \"status_count\" : " +
-            " { \"terms\" : { \"field\" : \"status\" } } } }", ctx);
+
+        " { \"terms\" : { \"field\" : \"status\" } } } }", null);
     assertEquals(Code.SUCCESS, res.code());
 
     res = interpreter.interpret("search /logs { \"aggs\" : { " +
-            " \"length\" : { \"terms\": { \"field\": \"status\" }, " +
-            "   \"aggs\" : { \"sum_length\" : { \"sum\" : { \"field\" : \"content_length\" } }, \"sum_status\" : { \"sum\" : { \"field\" : \"status\" } } } } } }", ctx);
+        " \"length\" : { \"terms\": { \"field\": \"status\" }, " +
+        "   \"aggs\" : { \"sum_length\" : { \"sum\" : { \"field\" : \"content_length\" } }, \"sum_status\" : { \"sum\" : { \"field\" : \"status\" } } } } } }", null);
     assertEquals(Code.SUCCESS, res.code());
   }
 
